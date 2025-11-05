@@ -1,5 +1,4 @@
 name: Ubuntu RDP (Stable XFCE Fix)
-
 on:
   workflow_dispatch:
 
