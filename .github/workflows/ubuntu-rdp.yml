@@ -15,13 +15,15 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xfce4 \
             xfce4-goodies \
+            xfce4-session \
             xorg \
             dbus-x11 \
             x11-xserver-utils \
             xrdp \
-            firefox
+            firefox \
+            policykit-1-gnome
 
-      - name: Configure XRDP Settings
+      - name: Configure XRDP and XFCE Session
         run: |
           # Stop and disable problematic services
           sudo systemctl stop lightdm 2>/dev/null || true
@@ -30,28 +32,78 @@ jobs:
           # Configure XRDP properly
           sudo sed -i 's/port=3389/port=tcp:\/\/:3389/g' /etc/xrdp/xrdp.ini
           sudo sed -i 's/use_vsock=true/use_vsock=false/g' /etc/xrdp/xrdp.ini
-          sudo sed -i 's/ssl_protocols=TLSv1.2, TLSv1.3/ssl_protocols=TLSv1.2/g' /etc/xrdp/xrdp.ini
           
-          # Fix session configuration
-          echo 'xfce4-session' > ~/.xsession
-          sudo mkdir -p /etc/skel
-          sudo cp ~/.xsession /etc/skel/
+          # Fix XFCE session configuration
+          sudo mkdir -p /etc/xdg/xfce4/xfconf/xfce-perchannel-xml
+          sudo tee /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml > /dev/null << 'ENDOFFILE'
+          <?xml version="1.0" encoding="UTF-8"?>
           
-          # Create proper startwm.sh
+          <channel name="xfce4-session" version="1.0">
+            <property name="general" type="empty">
+              <property name="LockCommand" type="string" value=""/>
+              <property name="SaveOnExit" type="bool" value="false"/>
+            </property>
+            <property name="sessions" type="empty">
+              <property name="Failsafe" type="empty">
+                <property name="IsFailsafe" type="bool" value="true"/>
+                <property name="Count" type="int" value="5"/>
+                <property name="Client0_Command" type="array">
+                  <value type="string" value="xfce4-panel"/>
+                </property>
+                <property name="Client0_PerScreen" type="bool" value="false"/>
+                <property name="Client1_Command" type="array">
+                  <value type="string" value="Thunar"/>
+                  <value type="string" value="--daemon"/>
+                </property>
+                <property name="Client1_PerScreen" type="bool" value="false"/>
+                <property name="Client2_Command" type="array">
+                  <value type="string" value="xfdesktop"/>
+                </property>
+                <property name="Client2_PerScreen" type="bool" value="false"/>
+                <property name="Client3_Command" type="array">
+                  <value type="string" value="xfce4-power-manager"/>
+                </property>
+                <property name="Client3_PerScreen" type="bool" value="false"/>
+              </property>
+            </property>
+          </channel>
+          ENDOFFILE
+
+          # Create proper startwm.sh for XRDP
           sudo tee /etc/xrdp/startwm.sh > /dev/null << 'ENDOFFILE'
           #!/bin/sh
+          # /etc/xrdp/startwm.sh
+          
           if [ -r /etc/default/locale ]; then
             . /etc/default/locale
             export LANG LANGUAGE
           fi
 
+          # Set XDG environment variables
           export XDG_SESSION_TYPE=x11
-          export GDK_BACKEND=x11
-          
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_CONFIG_DIRS=/etc/xdg/xdg-xfce:/etc/xdg
+          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share:/usr/local/share
+
+          # Start DBus
+          if [ -d /run/dbus ]; then
+            sudo dbus-daemon --config-file=/usr/share/dbus-1/system.conf
+          fi
+
           # Start XFCE
-          startxfce4
+          exec startxfce4
           ENDOFFILE
-          sudo chmod +x /etc/xrdp/startwm.sh
+                    sudo chmod +x /etc/xrdp/startwm.sh
+          
+                    # Create user session file
+                    echo '#!/bin/sh
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_CONFIG_DIRS=/etc/xdg/xdg-xfce:/etc/xdg
+          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/share:/usr/local/share
+          
+          exec startxfce4' | sudo tee /usr/bin/startxfce4-xrdp
+          sudo chmod +x /usr/bin/startxfce4-xrdp
 
       - name: Create RDP User with Secure Password
         run: |
@@ -65,21 +117,22 @@ jobs:
           fi
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
           
-          # Setup user environment
-          sudo mkdir -p /home/$USERNAME
-          sudo cp ~/.xsession /home/$USERNAME/ 2>/dev/null || true
+          # Setup user XFCE configuration
+          sudo mkdir -p /home/$USERNAME/.config/xfce4/xfconf/xfce-perchannel-xml
+          sudo cp /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml /home/$USERNAME/.config/xfce4/xfconf/xfce-perchannel-xml/
           sudo chown -R $USERNAME:$USERNAME /home/$USERNAME
-          
-          echo "RDP_CREDS=User:$USERNAME|Password:$PASSWORD" >> $GITHUB_ENV
+
+          echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
+          echo "RDP_PASSWORD=$PASSWORD" >> $GITHUB_ENV
 
       - name: Start RDP Services
         run: |
           # Configure firewall
           sudo ufw allow 3389/tcp 2>/dev/null || true
           
-          # Ensure DBus is running
-          sudo systemctl enable dbus
-          sudo systemctl start dbus
+          # Ensure DBus is running properly
+          sudo mkdir -p /run/dbus
+          sudo dbus-daemon --system --fork
           sleep 2
           
           # Start XRDP
@@ -88,7 +141,8 @@ jobs:
           sleep 5
           
           # Check status
-          sudo systemctl status xrdp --no-pager || true
+          echo "XRDP Status:"
+          sudo systemctl status xrdp --no-pager | head -5 || true
 
       - name: Install Tailscale
         run: |
@@ -107,38 +161,44 @@ jobs:
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
           echo "Tailscale IP: $TS_IP"
 
-      - name: Verify RDP Setup
+      - name: Final Setup Verification
         run: |
-          echo "=== RDP SETUP VERIFICATION ==="
-          echo "XRDP Status:"
-          sudo systemctl status xrdp --no-pager | head -10 || true
+          echo "=== FINAL SETUP CHECK ==="
+          echo "1. XRDP Service:"
+          sudo systemctl is-active xrdp && echo "ACTIVE" || echo "INACTIVE"
           echo ""
-          echo "Listening ports:"
-          sudo netstat -tlnp | grep :3389 || true
+          echo "2. Listening on RDP port:"
+          sudo netstat -tlnp | grep :3389 || echo "Not listening on 3389"
           echo ""
-          echo "Tailscale status:"
-          sudo tailscale status || true
-          echo "=============================="
+          echo "3. Tailscale Status:"
+          sudo tailscale status
+          echo ""
+          echo "4. User created:"
+          id $RDP_USER && echo "User OK" || echo "User missing"
+          echo "========================="
 
       - name: Maintain RDP Connection
         run: |
           echo ""
-          echo "=== UBUNTU RDP ACCESS ==="
-          echo "Address: $TAILSCALE_IP"
-          echo "Username: ubuntu"
-          echo "Password: $(echo $RDP_CREDS | cut -d'|' -f2 | cut -d':' -f2)"
-          echo "========================="
+          echo "🎯 UBUNTU RDP READY 🎯"
+          echo "📍 Address: $TAILSCALE_IP"
+          echo "👤 Username: $RDP_USER"
+          echo "🔑 Password: $RDP_PASSWORD"
+          echo "🕐 Port: 3389"
+          echo "========================"
           echo ""
-          echo "RDP is ready! Connect using Remote Desktop Client"
-          echo "Workflow will remain active for 6 hours max"
+          echo "Use Remote Desktop Client to connect"
+          echo "Session will auto-end after 6 hours"
           
-          # Keep alive loop
+          # Keep alive with service monitoring
           counter=0
           while [ $counter -lt 360 ]; do
-            echo "[$(date +'%H:%M:%S')] RDP Active - $(expr 360 - $counter) minutes remaining"
-            # Verify services are still running
-            sudo systemctl is-active xrdp > /dev/null || echo "XRDP service issue detected"
+            if ! sudo systemctl is-active xrdp > /dev/null; then
+              echo "⚠️  XRDP stopped, restarting..."
+              sudo systemctl start xrdp
+            fi
+            echo "[$(date +'%H:%M:%S')] RDP Active - $(expr 360 - $counter) min left"
             sleep 60
             counter=$((counter + 1))
           done
-          echo "RDP session ending due to timeout"
+          echo "⏰ RDP session ending"
