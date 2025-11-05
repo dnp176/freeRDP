@@ -1,0 +1,60 @@
+name: Ubuntu RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Update System Packages
+        run: |
+          sudo apt update -y
+          sudo apt install -y xfce4 xfce4-goodies xrdp net-tools curl wget
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+
+      - name: Create RDP User
+        run: |
+          USERNAME=rdpuser
+          PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 12)
+          echo "RDP_USER=$USERNAME" >> $GITHUB_ENV
+          echo "RDP_PASS=$PASSWORD" >> $GITHUB_ENV
+
+          sudo adduser --disabled-password --gecos "" $USERNAME
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          sudo adduser $USERNAME sudo
+
+      - name: Configure xRDP for XFCE
+        run: |
+          echo xfce4-session > ~/.xsession
+          sudo service xrdp restart
+
+      - name: Install and Connect Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-rdp-${{ github.run_id }}
+          echo "TAILSCALE_IP=$(tailscale ip -4)" >> $GITHUB_ENV
+
+      - name: Show Connection Info
+        run: |
+          echo "===================================="
+          echo "✅ RDP Connection Details"
+          echo "------------------------------------"
+          echo "IP Address : $TAILSCALE_IP"
+          echo "Username   : $RDP_USER"
+          echo "Password   : $RDP_PASS"
+          echo "------------------------------------"
+          echo "Connect using any RDP client (like Windows mstsc or Remmina)"
+          echo "Example ->  mstsc /v:$TAILSCALE_IP"
+          echo "===================================="
+
+      - name: Keep RDP Alive
+        run: |
+          echo "RDP Server is running... press Stop to end."
+          while true; do
+            date
+            sleep 300
+          done
