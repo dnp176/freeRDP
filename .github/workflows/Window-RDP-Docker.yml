@@ -25,34 +25,26 @@ jobs:
 
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User
+      - name: Create RDP User (fixed password)
         run: |
-          Add-Type -AssemblyName System.Security
-
-          $chars = @{
-              Upper   = [char[]](65..90)
-              Lower   = [char[]](97..122)
-              Number  = [char[]](48..57)
-              Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
-          }
-
-          $raw = @()
-          $raw += $chars.Upper   | Get-Random -Count 4
-          $raw += $chars.Lower   | Get-Random -Count 4
-          $raw += $chars.Number  | Get-Random -Count 4
-          $raw += $chars.Special | Get-Random -Count 4
-
-          $password = -join ($raw | Sort-Object { Get-Random })
-          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          # Use a fixed password as requested
+          $plain = 'Test@123456789$'
+          $secure = ConvertTo-SecureString $plain -AsPlainText -Force
 
           if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires
+              New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires -PasswordNeverExpires
+          } else {
+              # If user exists, update the password
+              $user = Get-LocalUser -Name "RDP"
+              $user | Set-LocalUser -Password $secure
           }
 
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          # Ensure membership
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
 
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          # Export password to environment for workflow logs (be careful — this will appear in logs)
+          echo "RDP_PASSWORD=$plain" >> $env:GITHUB_ENV
 
       - name: Install Tailscale
         run: |
@@ -80,44 +72,56 @@ jobs:
 
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Install Docker Desktop
+      - name: Enable Docker prerequisites (WSL2, VirtualMachinePlatform, Hyper-V, Containers)
         run: |
-          Write-Host "Installing Docker Desktop..."
-          $dockerUrl = "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
-          $dockerInstaller = "$env:TEMP\DockerInstaller.exe"
-          Invoke-WebRequest -Uri $dockerUrl -OutFile $dockerInstaller
-
-          # Silent install Docker
-          Start-Process -FilePath $dockerInstaller -ArgumentList "install", "--quiet", "--accept-license" -Wait
-
-          Remove-Item $dockerInstaller -Force
-
-          # Wait for Docker to register
-          Start-Sleep -Seconds 20
-          Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-          Write-Host "Docker installation complete and started."
-
-      - name: Verify Docker Installation
-        run: |
-          Start-Sleep -Seconds 15
-          docker version
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "Docker not detected or failed to start."
-              exit 1
+          Write-Host "Attempting to enable Windows features required for Docker..."
+          # Enable WSL and Virtual Machine Platform (WSL2)
+          try {
+              Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux -NoRestart -ErrorAction Stop
+              Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart -ErrorAction Stop
+          } catch {
+              Write-Warning "Failed to enable WSL/VirtualMachinePlatform (may require elevated permissions or unsupported runner). $_"
           }
-          Write-Host "Docker is installed and ready!"
+
+          # Enable Hyper-V (all) and Containers feature
+          try {
+              Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -NoRestart -ErrorAction Stop
+          } catch {
+              Write-Warning "Failed to enable Hyper-V (may be unsupported on this runner). $_"
+          }
+
+          try {
+              Enable-WindowsOptionalFeature -Online -FeatureName Containers -NoRestart -ErrorAction Stop
+          } catch {
+              Write-Warning "Failed to enable Containers feature. $_"
+          }
+
+          # WSL update and set default to version 2 (if wsl.exe present)
+          if (Get-Command wsl -ErrorAction SilentlyContinue) {
+              try {
+                  wsl --update
+                  wsl --set-default-version 2
+              } catch {
+                  Write-Warning "wsl commands failed or not supported on this runner. $_"
+              }
+          } else {
+              Write-Warning "wsl.exe not found on this runner."
+          }
+
+          Write-Host "Docker prerequisites enabling step finished. Check logs for any warnings."
 
       - name: Display Connection Info
         run: |
-          Write-Host "`n=== RDP + DOCKER READY ==="
+          Write-Host "`n=== RDP + DOCKER PREREQS READY (Docker NOT installed) ==="
           Write-Host "Tailscale IP : $env:TAILSCALE_IP"
           Write-Host "Username     : RDP"
           Write-Host "Password     : $env:RDP_PASSWORD"
+          Write-Host "NOTE: Docker Desktop installation was intentionally skipped per request."
           Write-Host "==========================`n"
 
       - name: Keep Session Alive
         run: |
           while ($true) {
-              Write-Host "[$(Get-Date)] Windows RDP + Docker Active..."
+              Write-Host "[$(Get-Date)] Windows RDP + Docker-prereqs Active..."
               Start-Sleep -Seconds 300
           }
