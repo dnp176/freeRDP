@@ -30,10 +30,12 @@ jobs:
 
       - name: Configure XFCE for xRDP
         run: |
+          # Set XFCE session
           echo "startxfce4" | sudo tee /home/rdpuser/.xsession
           sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
           sudo chmod +x /home/rdpuser/.xsession
 
+          # XFCE config for xRDP
           sudo mkdir -p /home/rdpuser/.config/xfce4/xfconf/xfce-perchannel-xml/
           echo '<?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-session" version="1.0">
@@ -43,7 +45,8 @@ jobs:
 </channel>' | sudo tee /home/rdpuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml
           sudo chown -R rdpuser:rdpuser /home/rdpuser/.config
 
-          sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
+          # Overwrite startwm.sh in a YAML-safe way
+          sudo tee /etc/xrdp/startwm.sh > /dev/null << 'EOF'
 #!/bin/bash
 if [ -r /etc/profile ]; then
   . /etc/profile
@@ -52,9 +55,10 @@ unset DBUS_SESSION_BUS_ADDRESS
 unset XDG_RUNTIME_DIR
 export DISPLAY=:10
 exec startxfce4
-EOF'
+EOF
           sudo chmod +x /etc/xrdp/startwm.sh
 
+          # Restart services
           sudo systemctl restart dbus
           sudo systemctl restart xrdp
 
@@ -85,4 +89,3 @@ EOF'
             sudo systemctl status xrdp | grep Active
             sleep 300
           done
-
