@@ -1,0 +1,69 @@
+name: macOS SSH Access
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-ssh:
+    runs-on: macos-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Create SSH User
+        run: |
+          # Generate secure random password
+          CHARSET="A-Za-z0-9@#%^&*_-"
+          PASSWORD=$(LC_ALL=C tr -dc "$CHARSET" < /dev/urandom | head -c 16)
+          echo "Generated password: $PASSWORD"
+
+          # Create user "remote"
+          sudo sysadminctl -addUser remote -password "$PASSWORD" -admin
+          sudo dscl . -create /Users/remote UserShell /bin/bash
+          sudo dscl . -create /Users/remote RealName "Remote User"
+
+          # Enable SSH login for the user
+          sudo systemsetup -setremotelogin on
+          sudo dseditgroup -o edit -a remote -t user com.apple.access_ssh
+
+          # Save credentials to GitHub env for later use
+          echo "SSH_USER=remote" >> $GITHUB_ENV
+          echo "SSH_PASS=$PASSWORD" >> $GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-macos-${GITHUB_RUN_ID}
+
+          # Wait for Tailscale IP
+          for i in {1..10}; do
+            IP=$(tailscale ip -4 | head -n1)
+            if [ -n "$IP" ]; then
+              echo "TAILSCALE_IP=$IP" >> $GITHUB_ENV
+              break
+            fi
+            sleep 5
+          done
+
+      - name: Verify SSH Connectivity
+        run: |
+          echo "Tailscale IP: $TAILSCALE_IP"
+          nc -zv "$TAILSCALE_IP" 22 || (echo "SSH port not reachable" && exit 1)
+          echo "SSH connectivity verified."
+
+      - name: Display SSH Credentials
+        run: |
+          echo ""
+          echo "=== SSH ACCESS INFO ==="
+          echo "Tailscale IP: $TAILSCALE_IP"
+          echo "Username: $SSH_USER"
+          echo "Password: $SSH_PASS"
+          echo "========================"
+          echo ""
+
+      - name: Keep macOS Instance Active
+        run: |
+          echo "macOS SSH session active. Use Ctrl+C in Actions UI to terminate."
+          while true; do
+            echo "[$(date)] SSH Active"
+            sleep 300
+          done
