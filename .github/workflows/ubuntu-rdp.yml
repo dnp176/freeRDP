@@ -13,8 +13,7 @@ jobs:
         run: |
           sudo apt update -y
           sudo apt install -y xfce4 xfce4-goodies xrdp dbus-x11 net-tools curl wget
-          sudo systemctl enable xrdp
-          sudo systemctl start xrdp
+          sudo service xrdp start
 
       - name: Create RDP User
         run: |
@@ -27,23 +26,26 @@ jobs:
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
           sudo adduser $USERNAME sudo
 
-      - name: Configure xRDP for XFCE (Fix Failsafe Error)
+      - name: Configure xRDP for XFCE (Fix Failsafe)
         run: |
-          # Set XFCE session
-          echo "xfce4-session" | sudo tee /home/$USER/.xsession
-          echo "xfce4-session" | sudo tee /home/$USER/.xinitrc
-          sudo chmod +x /home/$USER/.xsession /home/$USER/.xinitrc
-          
-          # Fix xRDP startup to launch XFCE
+          # For the RDP user
+          echo "xfce4-session" | sudo tee /home/rdpuser/.xsession
+          echo "xfce4-session" | sudo tee /home/rdpuser/.xinitrc
+          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession /home/rdpuser/.xinitrc
+
+          # Patch xrdp startup
           sudo sed -i '1a unset DBUS_SESSION_BUS_ADDRESS\nunset XDG_RUNTIME_DIR\nstartxfce4 &' /etc/xrdp/startwm.sh
-          sudo systemctl restart dbus
-          sudo systemctl restart xrdp
+
+          # Restart lightweight (container-safe way)
+          sudo service dbus restart || true
+          sudo service xrdp restart || true
 
       - name: Install and Connect Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-rdp-${{ github.run_id }}
-          echo "TAILSCALE_IP=$(tailscale ip -4)" >> $GITHUB_ENV
+          TAILSCALE_IP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
 
       - name: Show Connection Info
         run: |
