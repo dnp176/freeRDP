@@ -1,4 +1,4 @@
-name: Ubuntu RDP (Final Stable)
+name: Ubuntu RDP
 
 on:
   workflow_dispatch:
@@ -9,12 +9,12 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Install Desktop + xRDP
+      - name: Update System Packages
         run: |
           sudo apt update -y
-          sudo apt install -y xfce4 xfce4-goodies xrdp dbus-x11 net-tools curl wget
-          sudo service xrdp start
-          sudo service dbus start || true
+          sudo apt install -y xfce4 xfce4-goodies xrdp net-tools curl wget
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
 
       - name: Create RDP User
         run: |
@@ -27,52 +27,34 @@ jobs:
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
           sudo adduser $USERNAME sudo
 
-      - name: Configure XFCE for xRDP
+      - name: Configure xRDP for XFCE
         run: |
-          echo "xfce4-session" | sudo tee /home/rdpuser/.xsession
-          echo "xfce4-session" | sudo tee /home/rdpuser/.xinitrc
-          sudo chown rdpuser:rdpuser /home/rdpuser/.xsession /home/rdpuser/.xinitrc
+          echo xfce4-session > ~/.xsession
+          sudo service xrdp restart
 
-          sudo sed -i '1a unset DBUS_SESSION_BUS_ADDRESS\nunset XDG_RUNTIME_DIR\nstartxfce4 &' /etc/xrdp/startwm.sh
-          sudo service xrdp restart || true
-          sudo service dbus restart || true
-
-      - name: Verify xRDP Service
-        run: |
-          echo "Checking XRDP Service..."
-          sudo service xrdp status || true
-          echo "Checking listening port 3389..."
-          sudo netstat -tulnp | grep 3389 || echo "⚠️ Port 3389 not active yet!"
-          echo "Restarting just in case..."
-          sudo service xrdp restart || true
-          sleep 5
-          sudo netstat -tulnp | grep 3389 || echo "Still not listening!"
-
-      - name: Install & Connect Tailscale
+      - name: Install and Connect Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=ubuntu-rdp-${{ github.run_id }}
-          TAILSCALE_IP=$(tailscale ip -4)
-          echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
+          echo "TAILSCALE_IP=$(tailscale ip -4)" >> $GITHUB_ENV
 
       - name: Show Connection Info
         run: |
           echo "===================================="
           echo "✅ RDP Connection Details"
           echo "------------------------------------"
-          echo "Tailscale IP : $TAILSCALE_IP"
-          echo "Username     : $RDP_USER"
-          echo "Password     : $RDP_PASS"
+          echo "IP Address : $TAILSCALE_IP"
+          echo "Username   : $RDP_USER"
+          echo "Password   : $RDP_PASS"
           echo "------------------------------------"
-          echo "Use in mstsc (Windows):  mstsc /v:$TAILSCALE_IP"
-          echo "Use in Remmina (Linux):  rdp://$TAILSCALE_IP"
+          echo "Connect using any RDP client (like Windows mstsc or Remmina)"
+          echo "Example ->  mstsc /v:$TAILSCALE_IP"
           echo "===================================="
 
-      - name: Keep Alive
+      - name: Keep RDP Alive
         run: |
-          echo "🟢 RDP Server active, waiting for connection..."
+          echo "RDP Server is running... press Stop to end."
           while true; do
             date
-            sudo service xrdp status | grep Active
             sleep 300
           done
