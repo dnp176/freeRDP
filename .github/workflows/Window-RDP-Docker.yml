@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Enable RDP & Configure Firewall
         run: |
-          # Enable RDP
+          # Enable Remote Desktop
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                            -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
@@ -19,7 +19,7 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                            -Name "SecurityLayer" -Value 0 -Force
 
-          # Firewall rule for RDP
+          # Configure Firewall for RDP
           netsh advfirewall firewall delete rule name="RDP-Tailscale" > $null 2>&1
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
 
@@ -41,6 +41,7 @@ jobs:
           $raw += $chars.Lower   | Get-Random -Count 4
           $raw += $chars.Number  | Get-Random -Count 4
           $raw += $chars.Special | Get-Random -Count 4
+
           $password = -join ($raw | Sort-Object { Get-Random })
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
@@ -89,18 +90,21 @@ jobs:
           # Silent install Docker
           Start-Process -FilePath $dockerInstaller -ArgumentList "install", "--quiet", "--accept-license" -Wait
 
-          # Remove installer
           Remove-Item $dockerInstaller -Force
 
-          # Wait and start Docker Desktop
+          # Wait for Docker to register
           Start-Sleep -Seconds 20
           Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
           Write-Host "Docker installation complete and started."
 
       - name: Verify Docker Installation
         run: |
-          Start-Sleep -Seconds 10
-          docker version || (Write-Error "Docker not detected" ; exit 1)
+          Start-Sleep -Seconds 15
+          docker version
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Docker not detected or failed to start."
+              exit 1
+          }
           Write-Host "Docker is installed and ready!"
 
       - name: Display Connection Info
