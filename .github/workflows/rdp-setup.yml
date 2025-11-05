@@ -1,0 +1,70 @@
+name: Ubuntu RDP Setup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup RDP Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl wget
+        
+    - name: Download and Setup RDP
+      run: |
+        # Download RDP setup script
+        wget -O rdp-setup.sh https://raw.githubusercontent.com/termux/termux-app/master/scripts/remote-desktop/ubuntu-rdp.sh
+        chmod +x rdp-setup.sh
+        
+    - name: Install Ngrok
+      run: |
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt update && sudo apt install ngrok
+        
+    - name: Configure Ngrok
+      run: |
+        ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        
+    - name: Start RDP Service
+      run: |
+        bash -c "
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies xorg dbus-x11 x11-xserver-utils
+        sudo apt-get install -y xrdp
+        sudo systemctl enable xrdp
+        echo 'xfce4-session' > ~/.xsession
+        sudo systemctl start xrdp
+        sudo ufw allow 3389
+        "
+        
+    - name: Create User and Set Password
+      run: |
+        sudo useradd -m -s /bin/bash ubuntuuser
+        echo 'ubuntuuser:Password123' | sudo chpasswd
+        sudo usermod -aG sudo ubuntuuser
+        
+    - name: Expose RDP with Ngrok
+      run: |
+        ngrok tcp 3389 --log=stdout > ngrok.log &
+        sleep 10
+        # Extract Ngrok URL
+        curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' > ngrok_url.txt
+        
+    - name: Display Connection Info
+      run: |
+        echo "=== RDP CONNECTION DETAILS ==="
+        echo "IP: $(curl -s ifconfig.me)"
+        echo "Ngrok URL: $(cat ngrok_url.txt)"
+        echo "Username: ubuntuuser"
+        echo "Password: Password123"
+        echo "Port: 3389"
+        echo "=============================="
