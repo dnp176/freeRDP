@@ -9,10 +9,10 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Update System Packages
+      - name: Update & Install XFCE + XRDP
         run: |
           sudo apt update -y
-          sudo apt install -y xfce4 xfce4-goodies xrdp net-tools curl wget
+          sudo apt install -y xfce4 xfce4-goodies xrdp dbus-x11 net-tools curl wget
           sudo systemctl enable xrdp
           sudo systemctl start xrdp
 
@@ -27,10 +27,17 @@ jobs:
           echo "$USERNAME:$PASSWORD" | sudo chpasswd
           sudo adduser $USERNAME sudo
 
-      - name: Configure xRDP for XFCE
+      - name: Configure xRDP for XFCE (Fix Failsafe Error)
         run: |
-          echo xfce4-session > ~/.xsession
-          sudo service xrdp restart
+          # Set XFCE session
+          echo "xfce4-session" | sudo tee /home/$USER/.xsession
+          echo "xfce4-session" | sudo tee /home/$USER/.xinitrc
+          sudo chmod +x /home/$USER/.xsession /home/$USER/.xinitrc
+          
+          # Fix xRDP startup to launch XFCE
+          sudo sed -i '1a unset DBUS_SESSION_BUS_ADDRESS\nunset XDG_RUNTIME_DIR\nstartxfce4 &' /etc/xrdp/startwm.sh
+          sudo systemctl restart dbus
+          sudo systemctl restart xrdp
 
       - name: Install and Connect Tailscale
         run: |
@@ -43,9 +50,9 @@ jobs:
           echo "===================================="
           echo "✅ RDP Connection Details"
           echo "------------------------------------"
-          echo "IP Address : $TAILSCALE_IP"
-          echo "Username   : $RDP_USER"
-          echo "Password   : $RDP_PASS"
+          echo "Tailscale IP : $TAILSCALE_IP"
+          echo "Username     : $RDP_USER"
+          echo "Password     : $RDP_PASS"
           echo "------------------------------------"
           echo "Connect using any RDP client (like Windows mstsc or Remmina)"
           echo "Example ->  mstsc /v:$TAILSCALE_IP"
@@ -53,7 +60,7 @@ jobs:
 
       - name: Keep RDP Alive
         run: |
-          echo "RDP Server is running... press Stop to end."
+          echo "🟢 RDP Server is running... press Stop to end manually."
           while true; do
             date
             sleep 300
