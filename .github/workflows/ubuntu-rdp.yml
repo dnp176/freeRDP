@@ -34,14 +34,14 @@ jobs:
           
           # Configure session properly
           sudo tee /etc/xrdp/startwm.sh << 'ENDOFFILE'
-#!/bin/sh
-if [ -r /etc/default/locale ]; then
-  . /etc/default/locale
-  export LANG LANGUAGE
-fi
+          #!/bin/sh
+          if [ -r /etc/default/locale ]; then
+            . /etc/default/locale
+          export LANG LANGUAGE
+          fi
 
-startxfce4
-ENDOFFILE
+          startxfce4
+          ENDOFFILE
           sudo chmod +x /etc/xrdp/startwm.sh
 
       - name: Create RDP User with Secure Password
