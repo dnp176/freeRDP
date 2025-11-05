@@ -1,0 +1,118 @@
+name: Ubuntu RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Install XRDP and Desktop Environment
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 \
+            xfce4-goodies \
+            xorg \
+            dbus-x11 \
+            x11-xserver-utils \
+            xrdp \
+            firefox
+
+      - name: Configure XRDP Settings
+        run: |
+          # Configure XRDP
+          sudo systemctl enable xrdp
+          sudo sed -i 's/port=3389/port=tcp:\/\/:3389/g' /etc/xrdp/xrdp.ini
+          sudo sed -i 's/use_vsock=true/use_vsock=false/g' /etc/xrdp/xrdp.ini
+          
+          # Set XFCE as default session
+          echo 'xfce4-session' > ~/.xsession
+          sudo cp ~/.xsession /etc/skel/
+          
+          # Configure session properly
+          sudo tee /etc/xrdp/startwm.sh << 'EOF'
+#!/bin/sh
+if [ -r /etc/default/locale ]; then
+  . /etc/default/locale
+  export LANG LANGUAGE
+fi
+
+startxfce4
+EOF
+          sudo chmod +x /etc/xrdp/startwm.sh
+
+      - name: Create RDP User with Secure Password
+        run: |
+          # Generate secure password
+          PASSWORD=$(openssl rand -base64 16 | tr -d '=' | tr '+/' '##')
+          USERNAME="ubuntu"
+          
+          # Create user
+          sudo useradd -m -s /bin/bash -G sudo $USERNAME
+          echo "$USERNAME:$PASSWORD" | sudo chpasswd
+          
+          # Set up user directory
+          sudo cp ~/.xsession /home/$USERNAME/
+          sudo chown -R $USERNAME:$USERNAME /home/$USERNAME
+          
+          echo "RDP_CREDS=User: $USERNAME | Password: $PASSWORD" >> $GITHUB_ENV
+
+      - name: Configure Firewall and Services
+        run: |
+          # Allow RDP port
+          sudo ufw allow 3389/tcp
+          
+          # Start services
+          sudo systemctl restart dbus
+          sudo systemctl restart xrdp
+          sudo systemctl status xrdp
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-ubuntu-${{ github.run_id }}
+
+      - name: Get Tailscale IP
+        run: |
+          TS_IP=$(sudo tailscale ip -4)
+          if [ -z "$TS_IP" ]; then
+            echo "Waiting for Tailscale IP..."
+            sleep 10
+            TS_IP=$(sudo tailscale ip -4)
+          fi
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+          echo "Tailscale IP: $TS_IP"
+
+      - name: Verify RDP Accessibility
+        run: |
+          # Install netcat for testing
+          sudo apt-get install -y netcat
+          
+          # Test RDP port
+          echo "Testing RDP connection on $TAILSCALE_IP:3389"
+          timeout 10 bash -c "echo > /dev/tcp/$TAILSCALE_IP/3389" && \
+            echo "RDP port is accessible" || \
+            echo "RDP port test failed but continuing..."
+
+      - name: Maintain RDP Connection
+        run: |
+          echo "=== UBUNTU RDP ACCESS ==="
+          echo "Address: $TAILSCALE_IP"
+          echo "Username: ubuntu"
+          echo "Password: $(echo $RDP_CREDS | cut -d'|' -f2 | cut -d':' -f3)"
+          echo "========================="
+          echo ""
+          echo "RDP is ready! Connect using Remote Desktop Client"
+          echo "Workflow will remain active for 6 hours max"
+          
+          # Keep alive loop
+          counter=0
+          while [ $counter -lt 360 ]; do  # 360 * 60 = 6 hours
+            echo "[$(date)] RDP Active - $(expr 360 - $counter) minutes remaining"
+            sleep 60
+            counter=$((counter + 1))
+          done
+          echo "RDP session ending due to timeout"
