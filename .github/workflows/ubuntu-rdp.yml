@@ -9,11 +9,14 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Install Desktop Environment
+      - name: Update & Install Desktop Environment
         run: |
           sudo apt update -y
           sudo apt install -y xfce4 xfce4-goodies xrdp dbus-x11 x11-xserver-utils net-tools curl wget
+
+          # Enable and start xRDP and dbus
           sudo systemctl enable xrdp
+          sudo systemctl enable dbus
           sudo systemctl start dbus
           sudo systemctl start xrdp
 
@@ -30,9 +33,11 @@ jobs:
 
       - name: Configure XFCE for xRDP
         run: |
-          echo "xfce4-session" | sudo tee /home/rdpuser/.xsession
+          # Set XFCE session for RDP user
+          echo "startxfce4" | sudo tee /home/rdpuser/.xsession
           sudo chown rdpuser:rdpuser /home/rdpuser/.xsession
-          
+          sudo chmod +x /home/rdpuser/.xsession
+
           # Fix XFCE environment & D-Bus
           sudo mkdir -p /home/rdpuser/.config/xfce4/xfconf/xfce-perchannel-xml/
           echo '<?xml version="1.0" encoding="UTF-8"?>
@@ -43,16 +48,26 @@ jobs:
           </channel>' | sudo tee /home/rdpuser/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml
 
           sudo chown -R rdpuser:rdpuser /home/rdpuser/.config
-          
-          # Update xRDP start script
-          sudo sed -i.bak '/fi/a \
-          unset DBUS_SESSION_BUS_ADDRESS \
-          unset XDG_RUNTIME_DIR \
-          export DISPLAY=:10 \
-          startxfce4 &' /etc/xrdp/startwm.sh
 
-          sudo service dbus restart
-          sudo service xrdp restart
+          # Overwrite startwm.sh to properly launch XFCE
+          sudo bash -c 'cat > /etc/xrdp/startwm.sh <<EOF
+#!/bin/bash
+# startwm.sh for xRDP
+if [ -r /etc/profile ]; then
+    . /etc/profile
+fi
+
+unset DBUS_SESSION_BUS_ADDRESS
+unset XDG_RUNTIME_DIR
+export DISPLAY=:10
+exec startxfce4
+EOF'
+
+          sudo chmod +x /etc/xrdp/startwm.sh
+
+          # Restart services
+          sudo systemctl restart dbus
+          sudo systemctl restart xrdp
 
       - name: Install and Connect Tailscale
         run: |
@@ -78,6 +93,6 @@ jobs:
           echo "🟢 RDP Server running... waiting for connection"
           while true; do
             date
-            sudo service xrdp status | grep Active
+            sudo systemctl status xrdp | grep Active
             sleep 300
           done
