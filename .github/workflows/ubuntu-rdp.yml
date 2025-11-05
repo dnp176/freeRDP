@@ -47,7 +47,7 @@ jobs:
 EOF
           sudo chown -R rdpuser:rdpuser /home/rdpuser/.config
 
-          # Overwrite startwm.sh in a YAML-safe way
+          # Overwrite startwm.sh
           sudo tee /etc/xrdp/startwm.sh > /dev/null << 'EOF'
 #!/bin/bash
 if [ -r /etc/profile ]; then
@@ -63,7 +63,6 @@ EOF
           # Restart services
           sudo systemctl restart dbus
           sudo systemctl restart xrdp
-
 
       - name: Install and Connect Tailscale
         run: |
